@@ -101,6 +101,50 @@ def get_data_panel(data, N_column_name, start_date=None):
     return rank_chars, chars, date_vals, Ns
 
 
+
+def get_dataframe_from_panel(rank_chars, chars, date_vals, Ns, N_column_name):
+    """
+    Converts the panel data back into the original dataframe format.
+    
+    Parameters:
+    rank_chars : numpy.ndarray
+        The panel data of shape (len(date_vals), len(Ns), len(chars)).
+    chars : list
+        List of column names for the data.
+    date_vals : list
+        List of unique dates.
+    Ns : list
+        List of unique values for the N_column.
+    N_column_name : str
+        The name of the N_column in the original dataframe.
+        
+    Returns:
+    pandas.DataFrame
+        The reconstructed dataframe.
+    """
+    # Create empty list to hold data for reconstruction
+    rows = []
+    
+    # Iterate through the panel data and reconstruct each row
+    for i, date in enumerate(date_vals):
+        for j, N in enumerate(Ns):
+            # Get the data values for the given date and N
+            values = rank_chars[i, j, :]
+            # If all values are NaN, skip this entry
+            if np.all(np.isnan(values)):
+                continue
+            # Append a row with the date, N, and values
+            row = [date, N] + values.tolist()
+            rows.append(row)
+    
+    # Create the dataframe from the rows
+    columns = ['date', N_column_name] + chars.tolist()
+    reconstructed_df = pd.DataFrame(rows, columns=columns)
+    
+    return reconstructed_df
+
+
+
 def estimate_lambda(char_panel, num_days_train, K, min_chars,
                     time_varying_loadings=False, eval_weight_lmbda=True,
                     shrink_lmbda=False, reg=0, window_size=1):
@@ -126,8 +170,14 @@ def estimate_lambda(char_panel, num_days_train, K, min_chars,
     cov_mats = []
 
     for t in range(num_days_train):
-        cov_mats.append(get_cov_mat(char_panel[t][1])) # Send the N X L to get the characteristic covariance matrix of dim L X L
+        # cov_mats.append(get_cov_mat(char_panel[t][1])) # Send the N X L to get the characteristic covariance matrix of dim L X L
+        cov_mats.append(get_cov_mat(char_panel[t])[1]) # Send the N X L to get the characteristic covariance matrix of dim L X L
 
+    # print(sum(cov_mats)) # first debug
+    # print(cov_mats)
+    # print(cov_mats.shape)
+    # print(1/len(cov_mats))
+    # cov_mats_sum = np.mean(cov_mats, axis=0)
     cov_mats_sum = sum(cov_mats) * (1/len(cov_mats)) # Takes the average of the covariance matrix
 
     if time_varying_loadings: # local-based models have time-varying lambdas
@@ -471,7 +521,7 @@ def impute_em(X, max_iter=50, eps=1e-08):
                 S_OO = S[np.ix_(O_i, O_i)]
                 Mu_tilde[i] = Mu[np.ix_(M_i)] +\
                     S_MO @ np.linalg.inv(S_OO) @\
-                    (X_tilde[i, O_i]) - Mu[np.ix_(O_i)]
+                    (X_tilde[i, O_i] - Mu[np.ix_(O_i)])
                 X_tilde[i, M_i] = Mu_tilde[i]
                 S_MM_O = S_MM - S_MO @ np.linalg.inv(S_OO) @ S_OM
                 S_tilde[i][np.ix_(M_i, M_i)] = S_MM_O
@@ -549,6 +599,7 @@ def project_percentile_data_with_knn(observed_data, x_percentile_data, percentil
 def invert_cross_sectional_percentiles_with_knn(percentile_panel, partially_observed_panel):
     T, N, L = percentile_panel.shape
     inverted_panel = np.zeros((T,N,L))
+    percentile_panel_missing_mask = np.isnan(percentile_panel) # capturing the missing mask from the panel after imputation
     for t in range(T):
         # Extract the cross-sectional data at time t 
         for l in range(L): # Looping through the periodic characteristics
@@ -586,6 +637,9 @@ def invert_cross_sectional_percentiles_with_knn(percentile_panel, partially_obse
     full_data = partially_observed_panel.copy() # just initialize
 
     full_data[mask] = inverted_panel[mask]
+
+    # return the missing mask in the percentile panel to the data
+    full_data[percentile_panel_missing_mask] = np.nan
 
     return full_data 
 
@@ -709,109 +763,3 @@ def simulate_nan(X, nan_rate):
     }
 
     return result
-
-# create Simulated Experiment
-
-class Simulated_Experiment:
-    def __init__(self, T, N, L, nan_rate=0.4):
-        """ 
-        T: Number of days
-        N: Number of stocks/companies
-        L: Number of characteristics
-        nan_rate: Rate that controls the masking rate for the simulated data
-        
-        """
-        self.T = T 
-        self.N = N 
-        self.L = L  
-
-        self.nan_rate = nan_rate 
-
-
-    def generate_masked_data(self):
-        T, N, L = self.T, self.N, self.L 
-        panel = np.zeros((T,N,L))
-        for t in range(T):
-            np.random.seed(t) # for reproducibility 
-            # Generate random mean vector (mu)
-            mu = np.random.normal(size=L)
-            # Generate random covariance matrix (Sigma)
-            Sigma = np.random.rand(L,L)
-            Sigma = Sigma @ Sigma.T # Ensure positive-definite matrix 
-            panel[t,::] = np.random.multivariate_normal(mu, Sigma, N)
-
-        raw_chars = panel 
-
-        self.raw_chars = raw_chars # raw characteristics
-
-        # convert the raw_chars into rank_chars 
-        rank_chars = percentile_rank_panel(raw_chars)
-        self.rank_chars = rank_chars 
-
-
-        # Simulate missing data 
-        masked_rank_chars = np.array([simulate_nan(rank_chars[t], nan_rate=self.nan_rate)['X'] for t in range(T)])
-
-        self.masked_rank_chars = masked_rank_chars
-
-        return masked_rank_chars
-    
-    def evaluate_imputation_performance(self, method='xs', params=""):
-        """ 
-        Function can call any available imputation method 
-        method could be 'em', 'xs', 'b_xs', 'xs-median', 'forward_filling'
-        """
-
-        # create an object of Imputer and just use of the defaults
-        # then measure performance of imputation
-
-        impute_model = Imputer(self.masked_rank_chars)
-
-        # put params as input of each function
-        if method == 'em':
-            rank_imputed_chars = impute_model.impute_with_em(params)
-        
-        elif method == 'xs':
-            rank_imputed_chars = impute_model.impute_with_xs(params)
-
-        else: # Default 
-            print("Method not recognied")
-            print("Using default cross-sectional model")
-
-            rank_imputed_chars = impute_model.impute_with_xs()
-        
-        self.rank_imputed_chars = impute_model.rank_imputed_chars 
-        self.missing_mask_overall = impute_model.missing_mask_overall
-
-        # calculate metrics for the imputation model
-        # evaluate performance
-        metrics = self.evaluate_imputations(self.rank_chars)
-
-        return metrics
-    
-    def evaluate_imputations(self, rank_chars):
-        """ 
-        Adapted function to measure the quality of the imputation
-        rank_chars : the complete ranked characteristics
-        """
-        truth_panel = rank_chars
-
-        tgt = np.copy(truth_panel)
-        T, N, L = tgt.shape
-        imputed = np.zeros((T,N,L)) # initialized the panel
-        imputed[~self.missing_mask_overall] = np.nan # everywhere should be nan
-        imputed[self.missing_mask_overall] = self.rank_imputed_chars[self.missing_mask_overall]
-
-        tgt[np.isnan(imputed)] = np.nan # anyone that is still empty in the imputed chars, make them empty in the target
-
-        # compute rmse and r2
-        rmse = compute_rmse(tgt, imputed)
-        r2 = compute_r2(tgt, imputed)
-
-        metrics = {'rmse': rmse,
-                   'r2': r2}
-        
-        print(metrics)
-
-        return metrics
-    

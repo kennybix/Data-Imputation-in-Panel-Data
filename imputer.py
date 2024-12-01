@@ -203,7 +203,7 @@ class Imputer:
                 gamma_t = get_optimal_A(lmbda[t].T, gamma_t, present, ct, L=self.L, 
                                         idxs=to_impute, reg=self.reg_param, mu=mu[t])
             else:
-                gamma_t = lmbda[t].T.dot(ct.T).T # gamma_t = ct @ lmbda[t]
+                gamma_t = lmbda.T.dot(ct.T).T # gamma_t = ct @ lmbda[t]
                 gamma_t = get_optimal_A(lmbda.T, gamma_t, present, ct, L=self.L, 
                                         idxs=to_impute, reg=self.reg_param, mu=mu[t])
             
@@ -219,6 +219,14 @@ class Imputer:
 
         for t in range(self.T):
             gamma_ts[t, return_mask[t]] = gammas[t][return_mask[t]] # copying gamma into gamma_ts 
+
+        if self.time_varying_loadings:
+            new_imputation = np.concatenate([np.expand_dims(x @ l.T + m, axis=0) for x,l,m in zip(gamma_ts,lmbda,mu)], axis=0)
+        else:
+            new_imputation = np.concatenate([np.expand_dims(x @ lmbda.T + m, axis=0) for x,m in zip(gamma_ts, mu)], axis=0)
+        
+        for t in range(self.T):
+            imputed_chars[t, return_mask[t]] = new_imputation[t][return_mask[t]]
 
         self.rank_imputed_chars = imputed_chars
 
@@ -277,6 +285,112 @@ class Imputer:
         self.rank_imputed_chars = imputed_chars
 
         return self.rank_imputed_chars 
+    
+    def evaluate_imputations(self, rank_chars):
+        """ 
+        Adapted function to measure the quality of the imputation
+        rank_chars : the complete ranked characteristics
+        """
+        truth_panel = rank_chars
+
+        tgt = np.copy(truth_panel)
+        T, N, L = tgt.shape
+        imputed = np.zeros((T,N,L)) # initialized the panel
+        imputed[~self.missing_mask_overall] = np.nan # everywhere should be nan
+        imputed[self.missing_mask_overall] = self.rank_imputed_chars[self.missing_mask_overall]
+
+        tgt[np.isnan(imputed)] = np.nan # anyone that is still empty in the imputed chars, make them empty in the target
+
+        # compute rmse and r2
+        rmse = compute_rmse(tgt, imputed)
+        r2 = compute_r2(tgt, imputed)
+
+        metrics = {'rmse': rmse,
+                   'r2': r2}
+        
+        print(metrics)
+
+        return metrics
+    
+
+# create Simulated Experiment
+
+class Simulated_Experiment:
+    def __init__(self, T, N, L, nan_rate=0.4):
+        """ 
+        T: Number of days
+        N: Number of stocks/companies
+        L: Number of characteristics
+        nan_rate: Rate that controls the masking rate for the simulated data
+        
+        """
+        self.T = T 
+        self.N = N 
+        self.L = L  
+
+        self.nan_rate = nan_rate 
+
+
+    def generate_masked_data(self):
+        T, N, L = self.T, self.N, self.L 
+        panel = np.zeros((T,N,L))
+        for t in range(T):
+            np.random.seed(t) # for reproducibility 
+            # Generate random mean vector (mu)
+            mu = np.random.normal(size=L)
+            # Generate random covariance matrix (Sigma)
+            Sigma = np.random.rand(L,L)
+            Sigma = Sigma @ Sigma.T # Ensure positive-definite matrix 
+            panel[t,::] = np.random.multivariate_normal(mu, Sigma, N)
+
+        raw_chars = panel 
+
+        self.raw_chars = raw_chars # raw characteristics
+
+        # convert the raw_chars into rank_chars 
+        rank_chars = percentile_rank_panel(raw_chars)
+        self.rank_chars = rank_chars 
+
+
+        # Simulate missing data 
+        masked_rank_chars = np.array([simulate_nan(rank_chars[t], nan_rate=self.nan_rate)['X'] for t in range(T)])
+
+        self.masked_rank_chars = masked_rank_chars
+
+        return masked_rank_chars
+    
+    def evaluate_imputation_performance(self, method='xs', params=""):
+        """ 
+        Function can call any available imputation method 
+        method could be 'em', 'xs', 'b_xs', 'xs-median', 'forward_filling'
+        """
+
+        # create an object of Imputer and just use of the defaults
+        # then measure performance of imputation
+
+        impute_model = Imputer(self.masked_rank_chars)
+
+        # put params as input of each function
+        if method == 'em':
+            rank_imputed_chars = impute_model.impute_with_em(params)
+        
+        elif method == 'xs':
+            rank_imputed_chars = impute_model.impute_with_xs(params)
+
+        else: # Default 
+            print("Method not recognied")
+            print("Using default cross-sectional model")
+
+            rank_imputed_chars = impute_model.impute_with_xs()
+        
+        self.rank_imputed_chars = impute_model.rank_imputed_chars 
+        self.missing_mask_overall = impute_model.missing_mask_overall
+
+        # calculate metrics for the imputation model
+        # evaluate performance
+        metrics = self.evaluate_imputations(self.rank_chars)
+
+        return metrics
     
     def evaluate_imputations(self, rank_chars):
         """ 
