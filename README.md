@@ -67,3 +67,13 @@ This demonstrates the importance of leveraging advanced imputation methods to ma
 - **Visual Tools**:
   - Built-in visualizations to understand data completeness and imputation quality using `missingno` and other libraries.
 
+
+## References
+
+This project is inspired by and builds upon the concepts presented in the following research:
+
+**Bryzgalova, S., Lerner, S., Lettau, M., & Pelger, M. (2022).**  
+**Missing Financial Data.**  
+Available at SSRN: [https://ssrn.com/abstract=4106794](https://ssrn.com/abstract=4106794)
+
+We express our gratitude to the authors for their valuable contributions to the field, which have provided a foundation for this work.
