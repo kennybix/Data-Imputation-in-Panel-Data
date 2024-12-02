@@ -48,7 +48,7 @@ The plot below shows the initial leverage values:
 Notice how the value for **December** is significantly lower than the earlier months, highlighting the risk of assuming a static pattern. By dynamically utilizing the information from other companies and time points, imputation can provide more realistic estimates.
 
 ### Leverage Imputation Results
-![Leverage Imputation Results](Plots/Lev_imputation.png)
+![Leverage Imputation Results](Plots/LEV_imputation.png)
 
 This demonstrates the importance of leveraging advanced imputation methods to maintain data quality and reliability.
 
